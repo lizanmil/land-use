@@ -1,0 +1,60 @@
+BoroName,CD,CDTA2020,num_shelters
+Manhattan,CD12,MN12,3
+Manhattan,CD11,MN11,16
+Manhattan,CD10 ,MN10,19
+Manhattan,CD9 ,MN09,5
+Manhattan,CD8,MN08,1
+Manhattan,CD7,MN07,5
+Manhattan,CD6,MN06,4
+Manhattan,CD5,MN05,4
+Manhattan,CD4,MN04,4
+Manhattan,CD3,MN03,10
+Manhattan,CD2,MN02,0
+Manhattan,CD1,MN01,1
+Bronx ,CD12,BX12,2
+Bronx ,CD11,BX11,0
+Bronx ,CD10 ,BX10,3
+Bronx ,CD9 ,BX09,8
+Bronx ,CD8,BX08,1
+Bronx ,CD7,BX07,9
+Bronx ,CD6,BX06,21
+Bronx ,CD5,BX05,12
+Bronx ,CD4,BX04,16
+Bronx ,CD3,BX03,15
+Bronx ,CD2,BX02,6
+Bronx ,CD1,BX01,12
+Brooklyn ,CD18,BK18,2
+Brooklyn ,CD17,BK17,3
+Brooklyn ,CD16,BK16,22
+Brooklyn ,CD15 ,BK15,1
+Brooklyn ,CD14,BK14,2
+Brooklyn ,CD13,BK13,2
+Brooklyn ,CD12,BK12,2
+Brooklyn ,CD11,BK11,0
+Brooklyn ,CD10 ,BK10,0
+Brooklyn ,CD9 ,BK09,2
+Brooklyn ,CD8,BK08,8
+Brooklyn ,CD7,BK07,9
+Brooklyn ,CD6,BK06,6
+Brooklyn ,CD5,BK05,15
+Brooklyn ,CD4,BK04,8
+Brooklyn ,CD3,BK03,12
+Brooklyn ,CD2,BK02,5
+Brooklyn ,CD1,BK01,8
+Queens,CD14,QN14,4
+Queens,CD13,QN13,8
+Queens,CD12,QN12,12
+Queens,CD11,QN11,0
+Queens,CD10 ,QN10,4
+Queens,CD9 ,QN09,1
+Queens,CD8,QN08,1
+Queens,CD7,QN07,2
+Queens,CD6,QN06,0
+Queens,CD5,QN05,2
+Queens,CD4,QN04,3
+Queens,CD3,QN03,6
+Queens,CD2,QN02,5
+Queens,CD1,QN01,6
+Staten Island,CD3,SI03,0
+Staten Island,CD2,SI02,0
+Staten Island,CD1,SI01,1

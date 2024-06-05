@@ -1,0 +1,570 @@
+---
+title: "LULU Analysis (Version 2)"
+author: "Nikki Miller"
+date: "2023-08-10"
+output: html_document
+---
+
+<!-- Set Up and Read in Data --> 
+
+```{r include=FALSE}
+library(tidyverse)
+library(tidycensus)
+library(jsonlite)
+library(magrittr)
+library(sf)
+library(tigris)
+library(censusapi)
+library(leaflet)
+library(mapview)
+library(fs)
+library(openxlsx)
+library(assertr)
+library(scales)
+library(gt)
+
+colors_alt <- c("89a7a7","d1345b","f2a65a","2f4858","5b5f97")
+
+# dir <- "/Users/eliza/Data Analysis /land-use/raw_data"
+dir <- "/Users/eliza/Library/CloudStorage/OneDrive-Personal/data-practice/land-use/raw_data"
+
+out_dir <- "/Users/eliza/Data Analysis /land-use/Images"
+
+# GEOLEVEL - CDTA 
+cdta <- st_read(dsn = paste0(dir, "/nycdta2020_22b"), 
+                layer = "nycdta2020") %>% 
+  st_transform(4326) 
+
+# POVERTY DATA 
+poverty <- read_csv(str_glue("{dir}/econ_20162020_acs5yr_cdta.csv")) #poverty 
+# RACIAL CHARACTERISTICS DATA 
+race  <- read_csv(str_glue("{dir}/demo_20162020_acs5yr_cdta.csv")) #race 
+
+
+# Facility data from NYC Capital Planning Explorer 
+
+### Shelters 
+shelters <- read_csv(str_glue("{dir}/shelters_8_10_23.csv")) 
+
+### JAILS AND CORRECTIONAL FACILITES
+jails <- st_read(paste0(dir, "/detention_corrections"), 
+                 layer = "facilities_filtered_2022-10-31") %>% 
+  st_transform(4326) 
+
+### Solid WASTE TRANSFER STATIONS 
+wts <- st_read(paste0(dir, "/waste_transfer"), 
+               layer = "facilities_filtered_2022-10-31") %>% 
+  st_transform(4326) %>% 
+  filter(factype %in% c("SOLID WASTE TRANSFER STATION", "TRANSFER STATION"))
+
+
+wts$nta2020[wts$facname == "NYCDOS WEST 59TH STREET MTS"] <- "MN04"
+wts$nta2020[wts$facname == "DSNY PIKE SLIP HOUSEHOLD SPECIAL WASTE DROPOFF FACILITY" ] <- "MN03"
+wts$nta2020[wts$facname == "91 ST MARINE TRANSFER STATION" ] <- "MN08"
+wts$nta2020[wts$facname == "DSNY SOUTH BRONX HOUSEHOLD SPECIAL WASTE DROP-OFF SITE" ] <- "BX02"
+wts$nta2020[wts$facname == "HAMILTON AVENUE TRANFER STATION" ] <- "BK07"
+wts$nta2020[wts$facname == "DSNY MULDOON AVE HOUSEHOLD SPECIAL WASTE DROP-OFF FACILITY" ] <- "SI03"
+wts$nta2020[wts$facname == "WMNY REVIEW TRANSFER STATION"] <- "QN02"
+wts$nta2020[wts$facname == "PIER 99- TRANSFER STATION"] <- "MN04"
+wts$nta2020[wts$facname == "L.U.W. ADJ TO HUNTS POINT MKT"] <- "BX02"
+wts$nta2020[wts$facname == "NYCDOS-NORTH SHORE MTS"] <- "QN07"
+
+
+
+```
+
+<!-- Clean Data  - Poverty Rates and Racial Characteristics --> 
+```{r include=FALSE}
+# POVERTY RATES 
+
+### Assign factors to poverty rates 
+poverty_rates <- poverty %>% 
+  select(1:5, c("PBwPvP")) %>% 
+  mutate(poverty_cat = case_when(PBwPvP <= 10 & CDTAType != "JIA" ~  "0% - 10%", 
+                                 PBwPvP > 10 & PBwPvP <= 15 & CDTAType != "JIA"  ~ "11% - 15%", 
+                                 PBwPvP > 15 & PBwPvP <= 22  & CDTAType != "JIA"~ "16% - 22%",
+                                 PBwPvP > 22 & PBwPvP <= 31 & CDTAType != "JIA" ~ "23% - 31%", 
+                                 PBwPvP > 31 & PBwPvP <= 42 & CDTAType != "JIA" ~ "32% - 42%",
+                                 TRUE ~ "Parks & Open Area")) %>% 
+  rename(CDTA2020 = "GeoID") %>% 
+  arrange(poverty_cat) %>% 
+  mutate(ranking = 1:n())
+
+
+
+###  merge with cdta data, base map 
+cdta_poverty <- cdta %>% 
+  merge(poverty_rates, by = "CDTA2020")
+
+# RACIAL CHARACTERISTICS 
+
+race_rates <- race %>% 
+  select(1:5, c("WtNHP")) %>% 
+  mutate(race_cat = case_when(WtNHP <= 10 & CDTAType != "JIA" ~ "0% - 10%", 
+                              WtNHP > 10 & WtNHP <= 21 & CDTAType != "JIA"  ~ "11% - 21%", 
+                              WtNHP > 21 & WtNHP <= 32 & CDTAType != "JIA"~  "22% - 32%",
+                              WtNHP > 32 & WtNHP <= 43 & CDTAType != "JIA" ~ "33% - 43%", 
+                              WtNHP > 43 & WtNHP <= 64 & CDTAType != "JIA" ~ "44% - 64%",
+                              WtNHP > 64 & WtNHP <= 82 & CDTAType != "JIA" ~ "65% - 82%", 
+                              TRUE ~ "Parks & Open Area")) %>%  
+  rename(CDTA2020 = "GeoID") %>% 
+  arrange(race_cat) %>% 
+  mutate(ranking = 1:n())
+
+###  merge with cdta data, base map 
+cdta_race <- cdta %>% 
+  merge(race_rates, by = "CDTA2020")
+
+
+```
+
+<!-- Clean LULUs --> 
+```{r include=FALSE}
+# Change nta2020 to CDTA2020 
+
+# updated version of shelters already has cdta 
+# shelters_clean <- shelters %>%  
+#   mutate(CDTA2020 = str_sub(nta2020, 1, 4)) 
+
+jails_clean <- jails %>% 
+  mutate(CDTA2020 = str_sub(nta2020, 1, 4)) 
+
+wts_clean <- wts %>% 
+  mutate(CDTA2020 = str_sub(nta2020, 1, 4), 
+         flag = case_when(str_detect(facname, "HAMILTON") ~ "flag", 
+                          TRUE ~ as.character(facname))) %>%  
+  arrange(desc(flag)) %>%  
+  distinct(flag, .keep_all = TRUE) # remove 4 Hamilton stations that are duplicated 
+  
+
+
+
+```
+
+# Tables - Poverty 
+
+```{r echo=FALSE}
+# POVERTY 
+poverty_info <- cdta_poverty %>% 
+  filter(CDTAType.y != "JIA") %>% 
+  select(CDTA2020, GeogName, PBwPvP) %>% 
+  arrange(desc(PBwPvP))%>% 
+  st_drop_geometry() %>% 
+  head(5)
+
+
+poverty_info_table <- poverty_info %>%
+  gt() %>%
+  tab_header(title = md("**Share of Population Below Poverty Level by CDTA (2020)**"),
+    subtitle = "Top five CDTAs with highest population shares below the poverty level") %>%
+  opt_align_table_header(align = "left") %>%
+  cols_label(CDTA2020 = "CDTA 2020",
+             GeogName = "Neighborhoods",
+             PBwPvP = "Population share below Poverty") %>% 
+  cols_width(CDTA2020 ~ px(100), 
+             GeogName ~ px(350), 
+             PBwPvP ~ px(300)) %>% 
+  cols_align(align = "center", columns = PBwPvP) %>% 
+  tab_options(table.font.size = px(15)) %>% 
+  opt_table_font(font = "Times New Roman", weight = NULL, style = NULL, add = TRUE) %>% 
+  tab_source_note(source_note = "Source: Department of City Planning (DCP)") %>% 
+  tab_style(locations = cells_title(), 
+            style = list(cell_fill(color = "#E6E6E3")))
+
+gtsave(poverty_info_table, "poverty_info_table.png", expand = 12, zoom = 5, path = out_dir)
+
+
+```
+
+# Tables - Race 
+
+```{r echo=FALSE}
+# RACE 
+race_info <- cdta_race %>% 
+  filter(CDTAType.y != "JIA") %>% 
+  select(CDTA2020, GeogName, WtNHP) %>% 
+  arrange(WtNHP)%>% 
+  st_drop_geometry() %>% 
+  head(5)
+
+race_info_table <- race_info %>%
+  gt() %>%
+  tab_header(title = md("**Share of Population White, Non-Hispanic**"),
+    subtitle = "Top five CDTAs with lowest population shares of population White, Non-Hispanic by CDTA (2020)") %>%
+  opt_align_table_header(align = "left") %>%
+  cols_label(CDTA2020 = "CDTA 2020",
+             GeogName = "Neighborhoods",
+             WtNHP = "Population share White") %>% 
+  cols_width(CDTA2020 ~ px(100), 
+             GeogName ~ px(350), 
+             WtNHP ~ px(300)) %>% 
+  cols_align(align = "center", columns = WtNHP) %>% 
+  tab_options(table.font.size = px(15)) %>% 
+  opt_table_font(font = "Times New Roman", weight = NULL, style = NULL, add = TRUE) %>% 
+  tab_source_note(source_note = "Source: Department of City Planning (DCP)") %>% 
+  tab_style(locations = cells_title(), 
+            style = list(cell_fill(color = "#E6E6E3")))
+
+gtsave(race_info_table, "race_info_table.png", expand = 12, zoom = 5, path = out_dir)
+
+
+```
+
+
+# Tables - Shelter 
+
+```{r echo=FALSE}
+# SHELTERS - total number of shelters in 339 according to DHS figure 
+total_shelters <- 339
+
+shelter_info <- shelters %>% 
+  select(CDTA2020, BoroName, num_shelters) %>% 
+  group_by(CDTA2020) %>%
+  summarize(number = num_shelters,
+            share = num_shelters/total_shelters) %>% # shelters by CDTA 
+  ungroup() %>% 
+  distinct() %>% 
+  arrange(desc(share)) %>% 
+  mutate(share = scales::percent(share, accuracy = 0.01)) %>% 
+  head(5) 
+  
+
+shelter_info_table <- shelter_info %>%
+  gt() %>%
+  tab_header(title = md("**Shelters by CDTA**"),
+    subtitle = "The top five CDTAs with shelters") %>%
+  opt_align_table_header(align = "left") %>%
+  cols_label(CDTA2020 = "CDTA 2020",
+             number = "Number of Shelters", 
+             share = "Shelters (% of the total)") %>% 
+  cols_width(CDTA2020 ~ px(200), 
+             number ~ px(200), 
+             share ~ px(200)) %>% 
+  cols_align (align = "left") %>% 
+  tab_options(table.font.size = px(15)) %>% 
+  opt_table_font(font = "Times New Roman", weight = NULL, style = NULL, add = TRUE) %>% 
+  tab_source_note(source_note = "Source: New York City Department of Homeless Services, Department of Social Services (2022)") %>% 
+  tab_style(locations = cells_title(), 
+            style = list(cell_fill(color = "#E6E6E3")))
+
+
+gtsave(shelter_info_table, "shelter_info_table_updated.png", expand = 12, zoom = 5,  path = out_dir)
+```
+
+# Tables - Prisons (includes detention and correction facilites)
+```{r echo=FALSE}
+# PRISONS + DETENTION CENTERS  
+jails_info <- jails_clean %>% 
+  filter(CDTA2020 != is.na(CDTA2020)) %>% 
+  select(facname, CDTA2020, boro) %>% 
+  st_drop_geometry() %>% 
+  mutate(total = n())%>% # total number of jails 
+  group_by(CDTA2020) %>%
+  summarize(number = n(), 
+            share = number/total) %>% # jails by CDTA 
+  ungroup() %>% 
+  distinct() %>% 
+  arrange(desc(share)) %>% 
+  mutate(share = scales::percent(share, accuracy = 0.01)) %>% 
+  head(5) 
+  
+
+jails_info_table <- jails_info  %>%
+  gt() %>%
+  tab_header(title = md("**Jails and Correctional Facilities by CDTA**"),
+    subtitle = "The top five CDTAs with Jails and Corrections") %>%
+  opt_align_table_header(align = "left") %>%
+  cols_label(CDTA2020 = "CDTA 2020",
+             number = "Number of Jails and Corrections", 
+             share = "Jails and Corrections (% of the total)") %>% 
+  cols_width(CDTA2020 ~ px(200), 
+             number ~ px(250), 
+             share ~ px(300)) %>% 
+  cols_align (align = "left") %>% 
+  tab_source_note(source_note = "Source: Department of City Planning (DCP)") %>% 
+  tab_style(locations = cells_title(), 
+            style = list(cell_fill(color = "#E6E6E3"))) 
+
+gtsave(jails_info_table, "jails_info_table.png", expand = 12, zoom = 5, path = out_dir)
+```
+
+# Tables - Solid Waste Transfer Stations by CDTA
+```{r}
+wts_info <- wts_clean %>% 
+  filter(CDTA2020 != is.na(CDTA2020)) %>% 
+  select(facname, factype, CDTA2020, boro) %>% 
+  st_drop_geometry() %>% 
+  mutate(total = n())%>% # total number of stations 
+  group_by(CDTA2020) %>%
+  summarize(number = n(), 
+            share = number/total) %>% # solid waste transfer stations by CDTA 
+  ungroup() %>% 
+  distinct() %>% 
+  arrange(desc(share)) %>% 
+  mutate(share = scales::percent(share, accuracy = 0.01)) %>% 
+  head(5)
+  
+
+wts_info_table <- wts_info  %>%
+  gt() %>% 
+  tab_header(title = md("**Public and Non-Public Waste Transfer Stations by CDTA**"), 
+             subtitle = md("Top five CDTAs with Waste Transfer Stations")) %>% 
+  opt_align_table_header(align = "left") %>%
+  cols_label(CDTA2020 = "CDTA 2020",
+             number = "Number of Waste Transfer Stations", 
+             share = "Waste Transfer Stations (% of the total)") %>% 
+  cols_width(CDTA2020 ~ px(200), 
+             number ~ px(300), 
+             share ~ px(300)) %>% 
+  cols_align (align = "left") %>% 
+  tab_source_note(source_note = "Source: Department of City Planning (DCP)") %>% 
+  tab_style(locations = cells_title(), 
+            style = list(cell_fill(color = "#E6E6E3"))) 
+
+gtsave(wts_info_table, "wts_info_table.png", expand = 12, zoom = 5, path = out_dir)
+```
+
+
+<!-- Leaflet Palette for cdta-poverty --> 
+```{r include=FALSE}
+x <- sum(cdta_poverty$ranking < 60)   
+# number of values below threshold = 60
+
+
+### Create an asymmetric color range
+
+## Make vector of colors for values smaller than 60  (59 colors)
+rc1 <- colorRampPalette(colors = c("#FFE0B5", "#CA2E55"), space = "Lab")(x)    #59 
+
+## Make vector of colors for values larger than 60
+rc2 <- colorRampPalette(colors = c("#68A691", "#68A691"), space = "Lab")(length(cdta_poverty$ranking) - x)
+
+## Combine the two color palettes
+rampcols <- c(rc1, rc2)
+
+
+# Create a palette to fill in the polygons
+pal <- colorFactor(palette = rampcols, domain = cdta_poverty$poverty_cat)
+
+# Create a palette for a legend with ranking again. But this time with
+# colorNumeric()
+pal_leg <- colorFactor(palette = rampcols, domain = cdta_poverty$poverty_cat)
+```
+
+# Shelters and Poverty 
+```{r echo=FALSE}
+# Figure for Shelters and Poverty 
+
+
+cdta_poverty_shelter <- cdta_poverty %>% 
+  left_join(shelters, by = "CDTA2020") %>%  
+  select(c("CDTA2020", "num_shelters", "geometry")) %>% 
+  st_centroid() %>% 
+  mutate(longitude = unlist(map(geometry,1)),
+           latitude = unlist(map(geometry,2)))
+
+shelters_pov <- cdta_poverty %>% 
+  leaflet() %>%
+  setView(lng = -74.000060,
+          lat = 40.730910,
+          zoom = 10) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = cdta_poverty, 
+              color = "black", 
+              stroke = T, weight = 0.5,
+              fill = T, fillColor= ~pal(poverty_cat), 
+              fillOpacity = 1) %>% 
+  addCircles(data = cdta_poverty_shelter, 
+             lng = ~longitude, lat = ~latitude, weight = 2,
+             radius = ~sqrt(num_shelters) * 80, popup = ~CDTA2020) %>% 
+  addLegend(position = "bottomright",
+            pal = pal_leg,
+            values = ~cdta_poverty$poverty_cat, 
+            title = "Percentage of People Below the Poverty Level (2020)",
+            opacity = 1, 
+            labFormat = labelFormat(transform = function(poverty_cat)
+              sort(poverty_cat, decreasing = F))) 
+
+mapshot(shelters_pov, file = "shelters_pov.png")
+```
+
+# Jails and Poverty 
+```{r echo=FALSE}
+
+# Figure for Jails and Correctional Facilities 
+jails_pov <- cdta_poverty  %>% 
+  leaflet() %>%
+  setView(lng = -74.000060,
+          lat = 40.730910,
+          zoom = 10) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = cdta_poverty, 
+              color = "black", 
+              stroke = T, weight = 0.5,
+              fill = T, fillColor= ~pal(poverty_cat), 
+              fillOpacity = 5) %>% 
+  addCircles(data = jails_clean, 
+             lng = ~longitude, lat = ~latitude, weight = 5,
+             popup = ~CDTA2020) %>% 
+  addLegend(position = "bottomright",
+            pal = pal_leg,
+            values = ~cdta_poverty$poverty_cat, 
+            title = "Percentage of People Below the Poverty Level (2020)",
+            opacity = 1, 
+            labFormat = labelFormat(transform = function(poverty_cat)
+              sort(poverty_cat, decreasing = F)))
+
+mapshot(jails_pov, file = "jails_pov.png")
+```
+
+# WTSs and Poverty 
+```{r echo=FALSE}
+# Figure for Waste Transfer Stations and Poverty 
+
+
+wts_pov <- cdta_poverty  %>% 
+  leaflet() %>%
+  setView(lng = -74.000060,
+          lat = 40.730910,
+          zoom = 10) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = cdta_poverty, 
+              color = "black", 
+              stroke = T, weight = 0.5,
+              fill = T, fillColor= ~pal(poverty_cat), 
+              fillOpacity = 1) %>% 
+  addCircles(data = wts_clean, 
+             lng = ~longitude, lat = ~latitude, weight = 5,
+             popup = ~CDTA2020, 
+             fillOpacity = 5) %>% 
+  addLegend(position = "bottomright",
+            pal = pal_leg,
+            values = ~cdta_poverty$poverty_cat, 
+            title = "Percentage of People Below the Poverty Level (2020)",
+            opacity = 1, 
+            labFormat = labelFormat(transform = function(poverty_cat)
+              sort(poverty_cat, decreasing = F)))
+mapshot(wts_pov, file = "wts_pov.png")              
+```
+
+<!-- Leaflet Palette for cdta-race --> 
+```{r include=FALSE}
+x <- sum(cdta_race$ranking < 60)   
+# number of values below threshold = 60
+
+
+### Create an asymmetric color range
+
+## Make vector of colors for values smaller than 60  (59 colors)
+rc1 <- colorRampPalette(colors = c("#F4E8C1", "#4E8098"), space = "Lab")(x)    #59 
+
+## Make vector of colors for values larger than 60
+rc2 <- colorRampPalette(colors = c("#68A691", "#68A691"), space = "Lab")(length(cdta_race$ranking) - x)
+
+## Combine the two color palettes
+rampcols <- c(rc1, rc2)
+
+
+# Create a palette to fill in the polygons
+pal <- colorFactor(palette = rampcols, domain = cdta_race$race_cat)
+
+# Create a palette for a legend with ranking again. But this time with
+# colorNumeric()
+pal_leg <- colorFactor(palette = rampcols, domain = cdta_race$race_cat)
+```
+
+# Shelters and Race  
+```{r echo=FALSE}
+# Figure for Shelters and Race 
+
+cdta_race %>% 
+  left_join(shelters, by = "CDTA2020") %>%  
+  select(c("CDTA2020", "num_shelters", "geometry")) %>% 
+  st_centroid() %>% 
+  mutate(longitude = unlist(map(geometry,1)),
+           latitude = unlist(map(geometry,2)))
+
+
+shelters_race <- cdta_race  %>% 
+  leaflet() %>%
+  setView(lng = -74.000060,
+          lat = 40.730910,
+          zoom = 10) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = cdta_race, 
+              color = "black", 
+              stroke = T, weight = 0.5,
+              fill = T, fillColor= ~pal(race_cat), 
+              fillOpacity = 1) %>% 
+ addCircles(data = cdta_race_shelter, 
+             lng = ~longitude, lat = ~latitude, weight = 2,
+             radius = ~sqrt(num_shelters) * 80, popup = ~CDTA2020, color = "red") %>% 
+  addLegend(position = "bottomright",
+            pal = pal_leg,
+            values = ~cdta_race$race_cat, 
+            title = "Share of Population White (2020)",
+            opacity = 1, 
+            labFormat = labelFormat(transform = function(race_cat)
+              sort(race_cat, decreasing = F)))
+
+mapshot(shelters_race, file = "shelters_race.png")   
+```
+
+# Jails and Race  
+```{r echo=FALSE}
+# Figure for Shelters and Race 
+
+jails_race <- cdta_race  %>% 
+  leaflet() %>%
+  setView(lng = -74.000060,
+          lat = 40.730910,
+          zoom = 10) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = cdta_race, 
+              color = "black", 
+              stroke = T, weight = 0.5,
+              fill = T, fillColor= ~pal(race_cat), 
+              fillOpacity = 1) %>% 
+  addCircles(data = jails_clean, 
+             lng = ~longitude, lat = ~latitude, weight = 3,
+             popup = ~CDTA2020, color = "red") %>% 
+  addLegend(position = "bottomright",
+            pal = pal_leg,
+            values = ~cdta_race$race_cat, 
+            title = "Share of Population White (2020)",
+            opacity = 1, 
+            labFormat = labelFormat(transform = function(race_cat)
+              sort(race_cat, decreasing = F)))
+
+mapshot(jails_race, file = "jails_race.png")  
+```
+
+# WTS and Race  
+```{r echo=FALSE}
+# Figure for Shelters and Race 
+
+
+wts_race <- cdta_race  %>% 
+  leaflet() %>%
+  setView(lng = -74.000060,
+          lat = 40.730910,
+          zoom = 10) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = cdta_race, 
+              color = "black", 
+              stroke = T, weight = 0.5,
+              fill = T, fillColor= ~pal(race_cat), 
+              fillOpacity = 1) %>% 
+  addCircles(data = wts_clean, 
+             lng = ~longitude, lat = ~latitude, weight = 3,
+             popup = ~CDTA2020, color = "red") %>% 
+  addLegend(position = "bottomright",
+            pal = pal_leg,
+            values = ~cdta_race$race_cat, 
+            title = "Share of Population White (2020)",
+            opacity = 1, 
+            labFormat = labelFormat(transform = function(race_cat)
+              sort(race_cat, decreasing = F)))
+
+mapshot(wts_race, file = "wts_race.png")  
+```
